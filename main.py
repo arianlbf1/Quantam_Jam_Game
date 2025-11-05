@@ -22,9 +22,9 @@ import pygame
 WIDTH, HEIGHT = 960, 540
 PADDLE_WIDTH, PADDLE_HEIGHT = 16, 96
 BALL_RADIUS = 10
-PADDLE_SPEED = 320
-BALL_SPEED = 300
-SPLIT_ANGLE = math.radians(12)
+PADDLE_SPEED = 260
+BALL_SPEED = 230
+SPLIT_ANGLE = math.radians(11)
 MAX_STATES = 4
 MEASUREMENT_STRIP_X = WIDTH // 2
 MEASUREMENT_STRIP_WIDTH = 12
@@ -65,6 +65,18 @@ class QuantumState:
 
     def copy(self) -> "QuantumState":
         return QuantumState(self.x, self.y, self.vx, self.vy, self.probability, self.color)
+
+
+@dataclass
+class LessonStage:
+    title: str
+    summary: List[str]
+    objective: str
+    allow_superposition: bool = False
+    allow_measurement: bool = False
+    required_rallies: int = 0
+    required_superposition_time: float = 0.0
+    measurement_goal: int = 0
 
 
 class QuantumBall:
@@ -167,15 +179,23 @@ class QuantumBall:
                 return 1
         return None
 
-    def collide_with_paddle(self, paddle: Paddle) -> None:
+    def collide_with_paddle(self, paddle: Paddle, allow_superposition: bool) -> bool:
+        collided = False
         for state in self.states:
             if paddle.rect.collidepoint(state.x, state.y):
-                state.x = paddle.rect.right + BALL_RADIUS if paddle.x < WIDTH / 2 else paddle.rect.left - BALL_RADIUS
+                collided = True
+                state.x = (
+                    paddle.rect.right + BALL_RADIUS
+                    if paddle.x < WIDTH / 2
+                    else paddle.rect.left - BALL_RADIUS
+                )
                 state.vx *= -1
                 offset = ((state.y - paddle.y) / PADDLE_HEIGHT) - 0.5
-                state.vy = offset * BALL_SPEED * 1.5
-        self.split(angle_sign=-1 if paddle.x < WIDTH / 2 else 1)
+                state.vy = offset * BALL_SPEED * 1.4
+        if collided and allow_superposition:
+            self.split(angle_sign=-1 if paddle.x < WIDTH / 2 else 1)
         self.ensure_normalised()
+        return collided
 
 
 class QuantumPong:
@@ -191,12 +211,65 @@ class QuantumPong:
         self.running = True
         self.paused = False
         self.measure_hint_timer = 0.0
+        self.lesson_stages: List[LessonStage] = [
+            LessonStage(
+                title="Stage 1 · Classical Rally",
+                summary=[
+                    "This warm-up mirrors classic Pong.",
+                    "Track the white ball and meet it with your paddle.",
+                    "Feel how predictable classical motion can be.",
+                ],
+                objective="Return the ball 3 times using your paddle.",
+                required_rallies=3,
+            ),
+            LessonStage(
+                title="Stage 2 · Superposition",
+                summary=[
+                    "Now the ball can branch into several probable paths.",
+                    "Each colored copy shows where the quantum ball might be.",
+                    "Let the probabilities evolve before you make a decision.",
+                ],
+                objective="Keep the rally going while superposed paths persist for 5 seconds.",
+                allow_superposition=True,
+                required_superposition_time=5.0,
+            ),
+            LessonStage(
+                title="Stage 3 · Measurement",
+                summary=[
+                    "Observing the system collapses it to one outcome.",
+                    "Press M to actively measure, or guide the ball through the purple gate.",
+                    "Notice how the quantum spread disappears after measuring.",
+                ],
+                objective="Trigger 2 measurements to collapse the ball.",
+                allow_superposition=True,
+                allow_measurement=True,
+                measurement_goal=2,
+            ),
+            LessonStage(
+                title="Stage 4 · Sandbox",
+                summary=[
+                    "Combine all the ideas at your own pace.",
+                    "Experiment with delaying or hastening measurement.",
+                    "Can you predict the opponent while managing uncertainty?",
+                ],
+                objective="Free play — explore superposition and measurement together.",
+                allow_superposition=True,
+                allow_measurement=True,
+            ),
+        ]
+        self.stage_index = 0
+        self.stage_intro_active = True
+        self.stage_timer = 0.0
+        self.superposition_timer = 0.0
+        self.measurements_made = 0
+        self.player_rallies = 0
+        self.lesson_complete = False
 
     def run(self) -> None:
         while self.running:
             dt = self.clock.tick(60) / 1000
             self.handle_events()
-            if not self.paused:
+            if not self.paused and not self.stage_intro_active:
                 self.update(dt)
             self.draw()
         pygame.quit()
@@ -208,11 +281,17 @@ class QuantumPong:
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
-                elif event.key == pygame.K_SPACE:
+                elif event.key == pygame.K_SPACE and not self.stage_intro_active:
                     self.paused = not self.paused
-                elif event.key == pygame.K_m and not self.paused:
-                    self.ball.measure()
-                    self.measure_hint_timer = 0.0
+                elif event.key == pygame.K_RETURN and self.stage_intro_active:
+                    self.start_stage_play()
+                elif (
+                    event.key == pygame.K_m
+                    and not self.paused
+                    and not self.stage_intro_active
+                    and self.current_stage.allow_measurement
+                ):
+                    self.register_measurement(manual=True)
 
     def update(self, dt: float) -> None:
         keys = pygame.key.get_pressed()
@@ -225,16 +304,17 @@ class QuantumPong:
 
         avg_x, avg_y = self.ball.average_position()
         if avg_y < self.opponent.y + PADDLE_HEIGHT / 2:
-            self.opponent.move(-0.7, dt)
+            self.opponent.move(-0.6, dt)
         else:
-            self.opponent.move(0.7, dt)
+            self.opponent.move(0.6, dt)
 
         self.ball.update(dt)
-        self.ball.collide_with_paddle(self.player)
-        self.ball.collide_with_paddle(self.opponent)
+        if self.ball.collide_with_paddle(self.player, self.current_stage.allow_superposition):
+            self.player_rallies += 1
+        self.ball.collide_with_paddle(self.opponent, self.current_stage.allow_superposition)
 
-        if any(state.x for state in self.ball.states if state.x) and self.should_measure_strip():
-            self.ball.measure()
+        if self.current_stage.allow_measurement and self.should_measure_strip():
+            self.register_measurement(manual=False)
 
         score_direction = self.ball.any_state_offscreen()
         if score_direction == -1:
@@ -245,20 +325,30 @@ class QuantumPong:
             self.ball.reset(direction=-1)
 
         self.measure_hint_timer += dt
+        self.stage_timer += dt
+        if len(self.ball.states) > 1:
+            self.superposition_timer += dt
 
     def should_measure_strip(self) -> bool:
         for state in self.ball.states:
             if MEASUREMENT_STRIP_X <= state.x <= MEASUREMENT_STRIP_X + MEASUREMENT_STRIP_WIDTH:
-                if self.ball.collapse_timer > 0.6:
+                if self.ball.collapse_timer > 0.8:
                     return True
         return False
 
+    def register_measurement(self, manual: bool) -> None:
+        self.ball.measure()
+        self.measure_hint_timer = 0.0
+        self.measurements_made += 1
+        if manual:
+            self.ball.collapse_timer = 0.0
+
     def draw_probability_bar(self) -> None:
-        bar_width = 180
-        bar_height = 12
+        bar_width = 220
+        bar_height = 14
         x = WIDTH // 2 - bar_width // 2
-        y = HEIGHT - 50
-        pygame.draw.rect(self.screen, (30, 30, 30), (x, y, bar_width, bar_height), border_radius=6)
+        y = HEIGHT - 60
+        pygame.draw.rect(self.screen, (26, 26, 36), (x, y, bar_width, bar_height), border_radius=6)
         offset = x
         for state in self.ball.states:
             width = bar_width * state.probability
@@ -270,42 +360,110 @@ class QuantumPong:
             )
             offset += width
         caption = SMALL_FONT.render("Probability distribution of the ball", True, (230, 230, 230))
-        self.screen.blit(caption, (x, y - 20))
+        self.screen.blit(caption, (x, y - 22))
 
     def draw_measurement_strip(self) -> None:
+        if not self.current_stage.allow_measurement:
+            return
         strip_rect = pygame.Rect(MEASUREMENT_STRIP_X, 0, MEASUREMENT_STRIP_WIDTH, HEIGHT)
-        pygame.draw.rect(self.screen, (70, 30, 120), strip_rect, border_radius=8)
+        pygame.draw.rect(self.screen, (90, 40, 150), strip_rect, border_radius=8)
         text = SMALL_FONT.render("Measurement Gate", True, (210, 200, 255))
         self.screen.blit(text, (MEASUREMENT_STRIP_X - text.get_width() // 2, 20))
 
     def draw_ui(self) -> None:
-        score_text = FONT.render(f"Player {self.player_score} : {self.opponent_score} Opponent", True, (240, 240, 240))
-        self.screen.blit(score_text, (WIDTH // 2 - score_text.get_width() // 2, 60))
+        top_panel = pygame.Rect(0, 0, WIDTH, 72)
+        pygame.draw.rect(self.screen, (18, 18, 28), top_panel)
+        pygame.draw.line(self.screen, (60, 60, 90), (0, 72), (WIDTH, 72), 2)
+
+        score_text = FONT.render(
+            f"Player {self.player_score} : {self.opponent_score} Opponent",
+            True,
+            (240, 240, 240),
+        )
+        self.screen.blit(score_text, (WIDTH // 2 - score_text.get_width() // 2, 16))
 
         instructions = [
             "W/S or Up/Down: move paddle",
-            "M: perform a measurement to collapse the ball",
-            "Space: pause to reflect",
+            "Space: pause the simulation",
         ]
+        if self.current_stage.allow_measurement:
+            instructions.insert(1, "M: measure now (collapse superposition)")
         for idx, line in enumerate(instructions):
             text = SMALL_FONT.render(line, True, (200, 200, 200))
-            self.screen.blit(text, (20, 20 + idx * 20))
+            self.screen.blit(text, (20, 16 + idx * 20))
 
-        concept_header = TITLE_FONT.render("Quantum Principles", True, (255, 200, 120))
-        self.screen.blit(concept_header, (WIDTH - concept_header.get_width() - 20, 20))
-        concept_lines = [
-            "Superposition: Ball exists in several probable paths.",
-            "Let it evolve to keep the opponent guessing!",
-            "Measurement: Press M or hit the gate to collapse",
-            "the state into a single classical trajectory.",
-        ]
-        for idx, line in enumerate(concept_lines):
-            text = SMALL_FONT.render(line, True, (220, 220, 220))
-            self.screen.blit(text, (WIDTH - 360, 60 + idx * 18))
+        self.draw_stage_tracker()
 
-        if self.measure_hint_timer > 10 and len(self.ball.states) > 1:
-            hint = SMALL_FONT.render("Try measuring! Press M to observe the system.", True, (255, 210, 180))
-            self.screen.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 80))
+        if (
+            self.measure_hint_timer > 10
+            and len(self.ball.states) > 1
+            and self.current_stage.allow_measurement
+        ):
+            hint = SMALL_FONT.render(
+                "Try measuring! Press M to observe the system.",
+                True,
+                (255, 210, 180),
+            )
+            self.screen.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 90))
+
+    def draw_stage_tracker(self) -> None:
+        tracker_rect = pygame.Rect(WIDTH - 280, 8, 260, 56)
+        pygame.draw.rect(self.screen, (26, 26, 42), tracker_rect, border_radius=12)
+        pygame.draw.rect(self.screen, (70, 70, 120), tracker_rect, 2, border_radius=12)
+        stage_text = SMALL_FONT.render(
+            f"{self.current_stage.title}", True, (255, 210, 140)
+        )
+        self.screen.blit(stage_text, (tracker_rect.x + 12, tracker_rect.y + 8))
+        objective_text = SMALL_FONT.render(
+            self.current_stage.objective, True, (210, 210, 220)
+        )
+        self.screen.blit(objective_text, (tracker_rect.x + 12, tracker_rect.y + 30))
+        if self.lesson_complete:
+            completed = SMALL_FONT.render(
+                "Lesson complete! Enjoy the sandbox.", True, (180, 255, 180)
+            )
+            self.screen.blit(completed, (tracker_rect.x - 60, tracker_rect.y + 72))
+
+    @property
+    def current_stage(self) -> LessonStage:
+        return self.lesson_stages[self.stage_index]
+
+    def start_stage_play(self) -> None:
+        self.stage_intro_active = False
+        self.paused = False
+        self.stage_timer = 0.0
+        self.superposition_timer = 0.0
+        self.measure_hint_timer = 0.0
+        self.player_rallies = 0
+        self.measurements_made = 0
+        if self.stage_index == len(self.lesson_stages) - 1:
+            self.lesson_complete = True
+        self.ball.reset(direction=random.choice([-1, 1]))
+
+    def complete_current_stage(self) -> None:
+        if self.stage_index == len(self.lesson_stages) - 1:
+            self.lesson_complete = True
+            return
+        self.stage_index += 1
+        self.stage_intro_active = True
+        self.paused = True
+        self.player_rallies = 0
+        self.measurements_made = 0
+        self.superposition_timer = 0.0
+        self.stage_timer = 0.0
+        self.ball.reset(direction=random.choice([-1, 1]))
+
+    def check_stage_objectives(self) -> None:
+        stage = self.current_stage
+        if stage.required_rallies and self.player_rallies >= stage.required_rallies:
+            self.complete_current_stage()
+        elif (
+            stage.required_superposition_time
+            and self.superposition_timer >= stage.required_superposition_time
+        ):
+            self.complete_current_stage()
+        elif stage.measurement_goal and self.measurements_made >= stage.measurement_goal:
+            self.complete_current_stage()
 
     def draw(self) -> None:
         self.screen.fill((8, 8, 16))
@@ -316,21 +474,55 @@ class QuantumPong:
         self.draw_probability_bar()
         self.draw_ui()
 
-        if self.paused:
-            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            overlay.fill((10, 10, 40, 180))
-            self.screen.blit(overlay, (0, 0))
-            pause_text = TITLE_FONT.render("Paused", True, (255, 255, 255))
-            self.screen.blit(pause_text, (WIDTH // 2 - pause_text.get_width() // 2, HEIGHT // 2 - 60))
-            info_lines = [
-                "While paused, consider: what happens if you wait",
-                "longer before measuring? How do probabilities evolve?",
-            ]
-            for idx, line in enumerate(info_lines):
-                text = SMALL_FONT.render(line, True, (230, 230, 230))
-                self.screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 + idx * 20))
+        if self.stage_intro_active:
+            self.draw_stage_intro()
+        elif self.paused:
+            self.draw_pause_overlay()
+
+        if not self.lesson_complete:
+            self.check_stage_objectives()
 
         pygame.display.flip()
+
+    def draw_stage_intro(self) -> None:
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((10, 10, 30, 230))
+        self.screen.blit(overlay, (0, 0))
+        stage = self.current_stage
+        box = pygame.Rect(0, 0, WIDTH - 200, HEIGHT - 220)
+        box.center = (WIDTH // 2, HEIGHT // 2)
+        pygame.draw.rect(self.screen, (24, 24, 44), box, border_radius=16)
+        pygame.draw.rect(self.screen, (90, 90, 160), box, 3, border_radius=16)
+        title = TITLE_FONT.render(stage.title, True, (255, 215, 160))
+        self.screen.blit(title, (box.centerx - title.get_width() // 2, box.y + 30))
+        for idx, line in enumerate(stage.summary):
+            text = SMALL_FONT.render(line, True, (220, 220, 230))
+            self.screen.blit(text, (box.x + 40, box.y + 100 + idx * 26))
+        objective_label = FONT.render("Objective", True, (180, 220, 255))
+        self.screen.blit(objective_label, (box.x + 40, box.y + 220))
+        objective_text = SMALL_FONT.render(stage.objective, True, (200, 240, 255))
+        self.screen.blit(objective_text, (box.x + 40, box.y + 250))
+        prompt = SMALL_FONT.render("Press Enter to begin this stage", True, (255, 255, 255))
+        self.screen.blit(prompt, (box.centerx - prompt.get_width() // 2, box.bottom - 60))
+
+    def draw_pause_overlay(self) -> None:
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((10, 10, 40, 180))
+        self.screen.blit(overlay, (0, 0))
+        pause_text = TITLE_FONT.render("Paused", True, (255, 255, 255))
+        self.screen.blit(pause_text, (WIDTH // 2 - pause_text.get_width() // 2, HEIGHT // 2 - 60))
+        info_lines = [
+            "While paused, consider how probabilities evolve over time.",
+            "What advantage does waiting before measuring give you?",
+        ]
+        for idx, line in enumerate(info_lines):
+            text = SMALL_FONT.render(line, True, (230, 230, 230))
+            self.screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 + idx * 20))
+        if self.lesson_complete:
+            congrats = SMALL_FONT.render(
+                "Lesson complete! Keep experimenting.", True, (180, 255, 180)
+            )
+            self.screen.blit(congrats, (WIDTH // 2 - congrats.get_width() // 2, HEIGHT // 2 + 80))
 
 
 def main() -> None:
