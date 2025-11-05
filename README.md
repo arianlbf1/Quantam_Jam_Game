@@ -11,9 +11,9 @@ computing step by step.
   ball into several simultaneous paths. Each ghostly orb represents one
   possible trajectory and its brightness mirrors the probability that the ball
   will collapse to that path.
-- **Measurement** – Later in the lesson you can press `M` or allow the ball to
-  enter the glowing gate at the centre of the arena to perform a measurement.
-  The act of observation collapses the superposition and only one classical
+- **Measurement** – Later in the lesson you can press `M` to perform a
+  measurement. A glowing gate briefly appears to visualise the observation, and
+  the superposition collapses so only one classical
   ball remains.
 - **Probability Visualisation** – The probability bar near the bottom of the
   screen shows how the likelihoods of each path evolve over time.
@@ -33,7 +33,8 @@ stage when you are ready.
    paths and watch the probability bar as the superposition evolves for five
    seconds.
 3. **Stage 3 – Measurement**: Learn how observation collapses the system by
-   triggering two measurements, either manually or through the measurement gate.
+   pressing `M` twice to perform manual measurements and reveal the temporary
+   measurement gate.
 4. **Stage 4 – Sandbox**: Revisit every mechanic with full control and keep
    experimenting in free play.
 

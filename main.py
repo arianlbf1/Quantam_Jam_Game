@@ -211,6 +211,8 @@ class QuantumPong:
         self.running = True
         self.paused = False
         self.measure_hint_timer = 0.0
+        self.measurement_strip_visible = False
+        self.measurement_strip_timer = 0.0
         self.lesson_stages: List[LessonStage] = [
             LessonStage(
                 title="Stage 1 · Classical Rally",
@@ -237,10 +239,10 @@ class QuantumPong:
                 title="Stage 3 · Measurement",
                 summary=[
                     "Observing the system collapses it to one outcome.",
-                    "Press M to actively measure, or guide the ball through the purple gate.",
+                    "Press M to actively measure and reveal the purple gate.",
                     "Notice how the quantum spread disappears after measuring.",
                 ],
-                objective="Trigger 2 measurements to collapse the ball.",
+                objective="Press M twice to trigger manual measurements.",
                 allow_superposition=True,
                 allow_measurement=True,
                 measurement_goal=2,
@@ -291,7 +293,7 @@ class QuantumPong:
                     and not self.stage_intro_active
                     and self.current_stage.allow_measurement
                 ):
-                    self.register_measurement(manual=True)
+                    self.register_measurement()
 
     def update(self, dt: float) -> None:
         keys = pygame.key.get_pressed()
@@ -313,9 +315,6 @@ class QuantumPong:
             self.player_rallies += 1
         self.ball.collide_with_paddle(self.opponent, self.current_stage.allow_superposition)
 
-        if self.current_stage.allow_measurement and self.should_measure_strip():
-            self.register_measurement(manual=False)
-
         score_direction = self.ball.any_state_offscreen()
         if score_direction == -1:
             self.opponent_score += 1
@@ -329,19 +328,17 @@ class QuantumPong:
         if len(self.ball.states) > 1:
             self.superposition_timer += dt
 
-    def should_measure_strip(self) -> bool:
-        for state in self.ball.states:
-            if MEASUREMENT_STRIP_X <= state.x <= MEASUREMENT_STRIP_X + MEASUREMENT_STRIP_WIDTH:
-                if self.ball.collapse_timer > 0.8:
-                    return True
-        return False
+        if self.measurement_strip_visible:
+            self.measurement_strip_timer -= dt
+            if self.measurement_strip_timer <= 0:
+                self.measurement_strip_visible = False
 
-    def register_measurement(self, manual: bool) -> None:
+    def register_measurement(self) -> None:
         self.ball.measure()
         self.measure_hint_timer = 0.0
         self.measurements_made += 1
-        if manual:
-            self.ball.collapse_timer = 0.0
+        self.measurement_strip_visible = True
+        self.measurement_strip_timer = 1.0
 
     def draw_probability_bar(self) -> None:
         bar_width = 220
@@ -363,16 +360,18 @@ class QuantumPong:
         self.screen.blit(caption, (x, y - 22))
 
     def draw_measurement_strip(self) -> None:
-        if not self.current_stage.allow_measurement:
+        if not self.current_stage.allow_measurement or not self.measurement_strip_visible:
             return
-        strip_rect = pygame.Rect(MEASUREMENT_STRIP_X, 0, MEASUREMENT_STRIP_WIDTH, HEIGHT)
-        pygame.draw.rect(self.screen, (90, 40, 150), strip_rect, border_radius=8)
+        overlay = pygame.Surface((MEASUREMENT_STRIP_WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((90, 40, 150, 180))
+        self.screen.blit(overlay, (MEASUREMENT_STRIP_X, 0))
         text = SMALL_FONT.render("Measurement Gate", True, (210, 200, 255))
         self.screen.blit(text, (MEASUREMENT_STRIP_X - text.get_width() // 2, 20))
 
     def draw_ui(self) -> None:
-        top_panel = pygame.Rect(0, 0, WIDTH, 72)
-        pygame.draw.rect(self.screen, (18, 18, 28), top_panel)
+        top_overlay = pygame.Surface((WIDTH, 72), pygame.SRCALPHA)
+        top_overlay.fill((18, 18, 28, 215))
+        self.screen.blit(top_overlay, (0, 0))
         pygame.draw.line(self.screen, (60, 60, 90), (0, 72), (WIDTH, 72), 2)
 
         score_text = FONT.render(
@@ -434,6 +433,8 @@ class QuantumPong:
         self.stage_timer = 0.0
         self.superposition_timer = 0.0
         self.measure_hint_timer = 0.0
+        self.measurement_strip_visible = False
+        self.measurement_strip_timer = 0.0
         self.player_rallies = 0
         self.measurements_made = 0
         if self.stage_index == len(self.lesson_stages) - 1:
@@ -451,6 +452,8 @@ class QuantumPong:
         self.measurements_made = 0
         self.superposition_timer = 0.0
         self.stage_timer = 0.0
+        self.measurement_strip_visible = False
+        self.measurement_strip_timer = 0.0
         self.ball.reset(direction=random.choice([-1, 1]))
 
     def check_stage_objectives(self) -> None:
