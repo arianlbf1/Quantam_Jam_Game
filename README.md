@@ -1,72 +1,82 @@
-# Quantum Pong: Superposition Showdown
+# Quantum Snake: Superposition Lab
 
-Quantum Pong is a playful take on the classic Pong arcade game built with
-[pygame](https://www.pygame.org/). The latest version introduces a guided
-lesson mode that slows the action down and teaches the fundamentals of quantum
-computing step by step.
+Quantum Snake reimagines the classic Snake arcade challenge as a hands-on
+introduction to the core ideas of quantum computing. Built with
+[pygame](https://www.pygame.org/), the game walks players through
+superposition and measurement concepts before letting them experiment freely in
+a sandbox "lab" stage.
 
-## Quantum Concepts Inside the Game
+## Why Snake?
 
-- **Superposition** – Once unlocked in the lesson, paddle hits can branch the
-  ball into several simultaneous paths. Each ghostly orb represents one
-  possible trajectory and its brightness mirrors the probability that the ball
-  will collapse to that path.
-- **Measurement** – Later in the lesson you can press `M` to perform a
-  measurement. A glowing gate briefly appears to visualise the observation, and
-  the superposition collapses so only one classical
-  ball remains.
-- **Probability Visualisation** – The probability bar near the bottom of the
-  screen shows how the likelihoods of each path evolve over time.
+Snake already demonstrates deterministic, classical behaviour—the perfect
+baseline for showing how quantum rules differ. By layering in shimmering fruit
+that occupy multiple states and giving players control over when to measure the
+system, Quantum Snake turns abstract ideas into playful, memorable actions.
 
-Use these mechanics to keep the AI guessing, or time your measurements to gain
-an advantage once the concepts have been introduced.
+## Lesson Structure
 
-## Guided Lesson Flow
+The experience is paced across four guided stages. Each stage unlocks new UI
+notes, objectives, and mechanics so the learning curve stays approachable.
 
-Every core idea is introduced through a dedicated stage with on-screen
-explanations, UI cards, and objectives. Press `Enter` to advance into each
-stage when you are ready.
+1. **Stage 1 – Classical Control**  
+   Practise steering, collect five classical data bits, and build a feel for the
+   deterministic movement loop.
+2. **Stage 2 – Quantum Superposition**  
+   Fruit now spawn in two or three simultaneous positions. Percent labels above
+   each state visualise the probability that a measurement will collapse to that
+   spot. Press `M` to perform three measurements and progress.
+3. **Stage 3 – Strategic Measurement**  
+   Classical and quantum fruit mix together. Decide when to measure to reach
+   seven points without crashing. Purple flashes highlight each successful
+   observation.
+4. **Stage 4 – Free Play Lab**  
+   With every mechanic unlocked you can keep experimenting, design your own
+   challenges, and try to manage an ever-longer snake amid quantum uncertainty.
 
-1. **Stage 1 – Classical Rally**: Practise the basic controls with a single,
-   predictable ball. Return it three times to continue.
-2. **Stage 2 – Superposition**: Experience the ball splitting into simultaneous
-   paths and watch the probability bar as the superposition evolves for five
-   seconds.
-3. **Stage 3 – Measurement**: Learn how observation collapses the system by
-   pressing `M` twice to perform manual measurements and reveal the temporary
-   measurement gate.
-4. **Stage 4 – Sandbox**: Revisit every mechanic with full control and keep
-   experimenting in free play.
+## Quantum Concepts in Play
+
+- **Superposition** – Shimmering fruit markers show every probable location a
+  qubit-like data bit could collapse to. Their transparency and probability
+  labels reinforce that the fruit is not committed to a single tile yet.
+- **Measurement** – Press `M` to collapse a superposition into a single
+  classical fruit. A brief violet halo and screen tint visualise the act of
+  observation and help players connect the action with the theory.
+- **Probability Visualisation** – Percentages update every time a new
+  superposition is spawned, prompting players to reason about likelihood before
+  choosing when to measure.
+- **Classical vs Quantum Contrast** – Stage stats and concept notes highlight
+  the differences between deterministic motion and probabilistic outcomes.
 
 ## Controls
 
-- `W` / `S` or `↑` / `↓` – Move the player's paddle.
-- `Enter` – Start the highlighted lesson stage.
-- `M` – Measure the quantum state (available from Stage 3 onward).
-- `Space` – Pause the action and reflect on what is happening.
-- `Esc` – Quit.
+- `←`, `→`, `↑`, `↓` or `A`, `D`, `W`, `S` – Steer the snake.
+- `M` – Perform a measurement (available once quantum fruit appear).
+- `Esc` – Quit the game.
+
+Hints for facilitators and curious players appear directly in the UI so you can
+pause between rounds and discuss what happened.
 
 ## Installation & Running
 
-1. Create and activate a virtual environment (optional but recommended).
-2. Install the dependency:
+1. (Optional) Create and activate a virtual environment.
+2. Install dependencies:
 
    ```bash
    pip install -r requirements.txt
    ```
 
-3. Launch the game:
+3. Launch the lesson:
 
    ```bash
    python main.py
    ```
 
-You will need a desktop environment capable of opening a pygame window.
+A desktop environment capable of opening a pygame window is required.
 
 ## Requirements
 
 - Python 3.9+
 - pygame 2.0+
 
-If pygame fails to initialise because no display is available, set the
-`SDL_VIDEODRIVER` environment variable to a supported backend for your platform.
+If pygame reports that it cannot open a display, configure the `SDL_VIDEODRIVER`
+environment variable for your operating system before launching the game.

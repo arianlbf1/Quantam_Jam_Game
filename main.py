@@ -1,535 +1,484 @@
-"""Quantum Pong: A pygame-based educational game demonstrating quantum concepts.
-
-The game layers the basics of classical Pong with two quantum computing concepts:
-    * Superposition: the ball can travel in multiple probable paths simultaneously.
-    * Measurement: observing the quantum ball collapses it to a single classical path.
-
-Players can experiment with when to measure to collapse the ball, or allow the
-superposition to evolve to confuse the opponent's paddle.
-
-Run with: python main.py
-"""
+"""Quantum Snake: an educational pygame game introducing quantum superposition and measurement."""
 
 from __future__ import annotations
 
-import math
 import random
-from dataclasses import dataclass, field
-from typing import List
+from dataclasses import dataclass
+from typing import List, Sequence, Tuple
 
 import pygame
 
-WIDTH, HEIGHT = 960, 540
-PADDLE_WIDTH, PADDLE_HEIGHT = 16, 96
-BALL_RADIUS = 10
-PADDLE_SPEED = 260
-BALL_SPEED = 230
-SPLIT_ANGLE = math.radians(11)
-MAX_STATES = 4
-MEASUREMENT_STRIP_X = WIDTH // 2
-MEASUREMENT_STRIP_WIDTH = 12
+# Window and grid configuration
+WINDOW_WIDTH, WINDOW_HEIGHT = 960, 720
+CELL_SIZE = 24
+GRID_WIDTH = WINDOW_WIDTH // CELL_SIZE
+GRID_HEIGHT = WINDOW_HEIGHT // CELL_SIZE
+
+# Colours
+BACKGROUND = (6, 8, 20)
+GRID_COLOR = (20, 24, 40)
+SNAKE_HEAD_COLOR = (255, 246, 140)
+SNAKE_BODY_COLOR = (120, 220, 160)
+FRUIT_COLOR = (255, 80, 110)
+SUPERPOSITION_COLOR = (120, 210, 255, 170)
+MEASUREMENT_HALO = (170, 80, 255, 200)
+UI_PANEL = (12, 16, 40, 220)
+UI_TEXT = (230, 240, 255)
+HINT_TEXT = (230, 210, 255)
+
+# Timing
+MOVE_DELAY = 0.15  # seconds between snake steps
+MEASUREMENT_FLASH_DURATION = 0.6
+BANNER_DURATION = 3.5
 
 pygame.init()
-FONT = pygame.font.SysFont("Fira Code", 20)
-SMALL_FONT = pygame.font.SysFont("Fira Code", 16)
-TITLE_FONT = pygame.font.SysFont("Fira Code", 28, bold=True)
+FONT = pygame.font.Font(None, 32)
+SMALL_FONT = pygame.font.Font(None, 24)
+TINY_FONT = pygame.font.Font(None, 20)
+BIG_FONT = pygame.font.Font(None, 56)
 
-
-def clamp(value: float, minimum: float, maximum: float) -> float:
-    return max(minimum, min(value, maximum))
-
-
-@dataclass
-class Paddle:
-    x: float
-    y: float
-    is_player: bool = False
-
-    def move(self, direction: float, dt: float) -> None:
-        self.y += direction * PADDLE_SPEED * dt
-        self.y = clamp(self.y, 0, HEIGHT - PADDLE_HEIGHT)
-
-    @property
-    def rect(self) -> pygame.Rect:
-        return pygame.Rect(int(self.x), int(self.y), PADDLE_WIDTH, PADDLE_HEIGHT)
-
-
-@dataclass
-class QuantumState:
-    x: float
-    y: float
-    vx: float
-    vy: float
-    probability: float
-    color: pygame.Color = field(default_factory=lambda: pygame.Color(120, 200, 255))
-
-    def copy(self) -> "QuantumState":
-        return QuantumState(self.x, self.y, self.vx, self.vy, self.probability, self.color)
+Position = Tuple[int, int]
 
 
 @dataclass
 class LessonStage:
+    """Metadata describing a lesson step."""
+
     title: str
-    summary: List[str]
     objective: str
-    allow_superposition: bool = False
-    allow_measurement: bool = False
-    required_rallies: int = 0
-    required_superposition_time: float = 0.0
-    measurement_goal: int = 0
+    concept_notes: List[str]
+    allow_measurement: bool
+    superposition_chance: float
+    target_length: int = 0
+    target_collapses: int = 0
+    target_score: int = 0
 
 
-class QuantumBall:
+STAGES: Sequence[LessonStage] = [
+    LessonStage(
+        title="Classical Control",
+        objective="Collect 5 data bits without crashing.",
+        concept_notes=[
+            "Snake moves deterministically on a grid.",
+            "Eating classical fruit increases length by one.",
+            "No quantum effects yet—focus on steering!",
+        ],
+        allow_measurement=False,
+        superposition_chance=0.0,
+        target_score=5,
+    ),
+    LessonStage(
+        title="Quantum Superposition",
+        objective="Collapse 3 shimmering fruit with the M key.",
+        concept_notes=[
+            "Quantum fruit exist in multiple positions until measured.",
+            "Probabilities (percentages) show the likelihood of each state.",
+            "Press M to perform a measurement and collapse the state.",
+        ],
+        allow_measurement=True,
+        superposition_chance=1.0,
+        target_collapses=3,
+    ),
+    LessonStage(
+        title="Strategic Measurement",
+        objective="Score 7 points while mixing classical and quantum fruit.",
+        concept_notes=[
+            "Not every fruit is quantum—decide when to measure.",
+            "Measuring early guarantees a position but costs time.",
+            "Let the superposition evolve as you line up a better shot.",
+        ],
+        allow_measurement=True,
+        superposition_chance=0.6,
+        target_score=7,
+    ),
+    LessonStage(
+        title="Free Play Lab",
+        objective="Keep experimenting! Try self-imposed challenges.",
+        concept_notes=[
+            "Combine movement, superposition, and measurement strategies.",
+            "Try timing measurements just before contact for surprise collapses.",
+            "Can you maintain a long snake while dealing with quantum fruit?",
+        ],
+        allow_measurement=True,
+        superposition_chance=0.75,
+    ),
+]
+
+
+class QuantumFruit:
+    """Fruit that can exist in classical or superposed states."""
+
     def __init__(self) -> None:
-        self.states: List[QuantumState] = []
-        self.collapse_timer = 0.0
-        self.reset(direction=1)
+        self.positions: List[Position] = [(0, 0)]
+        self.weights: List[float] = [1.0]
+        self.state: str = "classical"
+        self.highlight_timer: float = 0.0
 
-    def reset(self, direction: int) -> None:
-        self.states = [
-            QuantumState(WIDTH / 2, HEIGHT / 2, direction * BALL_SPEED, random.uniform(-140, 140), 1.0,
-                         pygame.Color(255, 255, 255)),
+    def _available_positions(self, snake: Sequence[Position]) -> List[Position]:
+        snake_set = set(snake)
+        return [
+            (x, y)
+            for x in range(GRID_WIDTH)
+            for y in range(GRID_HEIGHT)
+            if (x, y) not in snake_set
         ]
-        self.collapse_timer = 0.0
 
-    def ensure_normalised(self) -> None:
-        total = sum(state.probability for state in self.states)
-        if total == 0:
-            equal_prob = 1.0 / len(self.states)
-            for state in self.states:
-                state.probability = equal_prob
+    def spawn(self, snake: Sequence[Position], superposition_chance: float) -> None:
+        if superposition_chance > 0 and random.random() < superposition_chance:
+            self._spawn_superposition(snake)
+        else:
+            self._spawn_classical(snake)
+
+    def _spawn_classical(self, snake: Sequence[Position]) -> None:
+        available = self._available_positions(snake)
+        if not available:
             return
-        for state in self.states:
-            state.probability /= total
+        self.positions = [random.choice(available)]
+        self.weights = [1.0]
+        self.state = "classical"
+        self.highlight_timer = 0.0
+
+    def _spawn_superposition(self, snake: Sequence[Position]) -> None:
+        available = self._available_positions(snake)
+        if not available:
+            self._spawn_classical(snake)
+            return
+        random.shuffle(available)
+        desired_states = 2 if len(available) < 3 else random.choice([2, 2, 3])
+        desired_states = min(desired_states, len(available))
+        self.positions = available[:desired_states]
+        raw_weights = [random.uniform(0.4, 1.2) for _ in self.positions]
+        total = sum(raw_weights) or 1.0
+        self.weights = [w / total for w in raw_weights]
+        self.state = "superposition"
+        self.highlight_timer = 0.0
+
+    def measure(self) -> bool:
+        if self.state != "superposition":
+            return False
+        indices = list(range(len(self.positions)))
+        chosen_index = random.choices(indices, weights=self.weights)[0]
+        chosen_position = self.positions[chosen_index]
+        self.positions = [chosen_position]
+        self.weights = [1.0]
+        self.state = "collapsed"
+        self.highlight_timer = MEASUREMENT_FLASH_DURATION
+        return True
 
     def update(self, dt: float) -> None:
-        self.collapse_timer += dt
-        for state in self.states:
-            state.x += state.vx * dt
-            state.y += state.vy * dt
-
-            if state.y - BALL_RADIUS < 0:
-                state.y = BALL_RADIUS
-                state.vy = abs(state.vy)
-            elif state.y + BALL_RADIUS > HEIGHT:
-                state.y = HEIGHT - BALL_RADIUS
-                state.vy = -abs(state.vy)
-
-        self.ensure_normalised()
+        if self.highlight_timer > 0:
+            self.highlight_timer = max(0.0, self.highlight_timer - dt)
 
     def draw(self, surface: pygame.Surface) -> None:
-        for state in self.states:
-            alpha = clamp(int(120 + state.probability * 120), 80, 255)
-            overlay = pygame.Surface((BALL_RADIUS * 2, BALL_RADIUS * 2), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, 0))
-            pygame.draw.circle(overlay, (*state.color[:3], alpha), (BALL_RADIUS, BALL_RADIUS), BALL_RADIUS)
-            surface.blit(overlay, (state.x - BALL_RADIUS, state.y - BALL_RADIUS))
-
-    def measure(self) -> None:
-        probabilities = [state.probability for state in self.states]
-        cumulative = []
-        total = 0.0
-        for prob in probabilities:
-            total += prob
-            cumulative.append(total)
-        collapse_value = random.random() * total
-        chosen_index = 0
-        for idx, boundary in enumerate(cumulative):
-            if collapse_value <= boundary:
-                chosen_index = idx
-                break
-        chosen_state = self.states[chosen_index]
-        chosen_state.probability = 1.0
-        chosen_state.color = pygame.Color(255, 230, 120)
-        self.states = [chosen_state]
-        self.collapse_timer = 0.0
-
-    def split(self, angle_sign: int) -> None:
-        if len(self.states) >= MAX_STATES:
-            return
-        new_states: List[QuantumState] = []
-        for state in self.states:
-            base = state.copy()
-            rotated = state.copy()
-            # Slightly rotate velocity to create a new path
-            speed = math.hypot(state.vx, state.vy)
-            angle = math.atan2(state.vy, state.vx)
-            rotated_angle = angle + angle_sign * SPLIT_ANGLE
-            rotated.vx = math.cos(rotated_angle) * speed
-            rotated.vy = math.sin(rotated_angle) * speed
-            rotated.color = pygame.Color(180, 255, 180)
-            base.color = pygame.Color(200, 160, 255)
-            new_states.extend([base, rotated])
-        equal_prob = 1.0 / len(new_states)
-        for state in new_states:
-            state.probability = equal_prob
-        self.states = new_states
-        self.collapse_timer = 0.0
-
-    def average_position(self) -> tuple[float, float]:
-        avg_x = sum(state.x * state.probability for state in self.states)
-        avg_y = sum(state.y * state.probability for state in self.states)
-        return avg_x, avg_y
-
-    def any_state_offscreen(self) -> int | None:
-        for state in self.states:
-            if state.x + BALL_RADIUS < 0:
-                return -1
-            if state.x - BALL_RADIUS > WIDTH:
-                return 1
-        return None
-
-    def collide_with_paddle(self, paddle: Paddle, allow_superposition: bool) -> bool:
-        collided = False
-        for state in self.states:
-            if paddle.rect.collidepoint(state.x, state.y):
-                collided = True
-                state.x = (
-                    paddle.rect.right + BALL_RADIUS
-                    if paddle.x < WIDTH / 2
-                    else paddle.rect.left - BALL_RADIUS
+        if self.state == "superposition":
+            for idx, (x, y) in enumerate(self.positions):
+                center = (x * CELL_SIZE + CELL_SIZE // 2, y * CELL_SIZE + CELL_SIZE // 2)
+                overlay = pygame.Surface((CELL_SIZE, CELL_SIZE), pygame.SRCALPHA)
+                pygame.draw.circle(
+                    overlay,
+                    SUPERPOSITION_COLOR,
+                    (CELL_SIZE // 2, CELL_SIZE // 2),
+                    CELL_SIZE // 2 - 2,
                 )
-                state.vx *= -1
-                offset = ((state.y - paddle.y) / PADDLE_HEIGHT) - 0.5
-                state.vy = offset * BALL_SPEED * 1.4
-        if collided and allow_superposition:
-            self.split(angle_sign=-1 if paddle.x < WIDTH / 2 else 1)
-        self.ensure_normalised()
-        return collided
+                surface.blit(overlay, (center[0] - CELL_SIZE // 2, center[1] - CELL_SIZE // 2))
+                probability = int(round(self.weights[idx] * 100))
+                label = TINY_FONT.render(f"{probability}%", True, (10, 18, 44))
+                label_rect = label.get_rect(center=center)
+                surface.blit(label, label_rect)
+        else:
+            x, y = self.positions[0]
+            center = (x * CELL_SIZE + CELL_SIZE // 2, y * CELL_SIZE + CELL_SIZE // 2)
+            pygame.draw.circle(
+                surface,
+                FRUIT_COLOR,
+                center,
+                CELL_SIZE // 2 - 2,
+            )
+            if self.highlight_timer > 0:
+                alpha = int(255 * (self.highlight_timer / MEASUREMENT_FLASH_DURATION))
+                halo_surface = pygame.Surface((CELL_SIZE * 2, CELL_SIZE * 2), pygame.SRCALPHA)
+                pygame.draw.circle(
+                    halo_surface,
+                    (*MEASUREMENT_HALO[:3], alpha),
+                    (CELL_SIZE, CELL_SIZE),
+                    CELL_SIZE,
+                    width=3,
+                )
+                surface.blit(halo_surface, (center[0] - CELL_SIZE, center[1] - CELL_SIZE))
 
 
-class QuantumPong:
-    def __init__(self) -> None:
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
-        pygame.display.set_caption("Quantum Pong: Superposition Showdown")
+class QuantumSnakeGame:
+    """Encapsulates gameplay, rendering, and lesson progression."""
+
+    def __init__(self, screen: pygame.Surface) -> None:
+        self.screen = screen
         self.clock = pygame.time.Clock()
-        self.ball = QuantumBall()
-        self.player = Paddle(32, HEIGHT / 2 - PADDLE_HEIGHT / 2, is_player=True)
-        self.opponent = Paddle(WIDTH - 48, HEIGHT / 2 - PADDLE_HEIGHT / 2)
-        self.player_score = 0
-        self.opponent_score = 0
-        self.running = True
-        self.paused = False
-        self.measure_hint_timer = 0.0
-        self.measurement_strip_visible = False
-        self.measurement_strip_timer = 0.0
-        self.lesson_stages: List[LessonStage] = [
-            LessonStage(
-                title="Stage 1 · Classical Rally",
-                summary=[
-                    "This warm-up mirrors classic Pong.",
-                    "Track the white ball and meet it with your paddle.",
-                    "Feel how predictable classical motion can be.",
-                ],
-                objective="Return the ball 3 times using your paddle.",
-                required_rallies=3,
-            ),
-            LessonStage(
-                title="Stage 2 · Superposition",
-                summary=[
-                    "Now the ball can branch into several probable paths.",
-                    "Each colored copy shows where the quantum ball might be.",
-                    "Let the probabilities evolve before you make a decision.",
-                ],
-                objective="Keep the rally going while superposed paths persist for 5 seconds.",
-                allow_superposition=True,
-                required_superposition_time=5.0,
-            ),
-            LessonStage(
-                title="Stage 3 · Measurement",
-                summary=[
-                    "Observing the system collapses it to one outcome.",
-                    "Press M to actively measure and reveal the purple gate.",
-                    "Notice how the quantum spread disappears after measuring.",
-                ],
-                objective="Press M twice to trigger manual measurements.",
-                allow_superposition=True,
-                allow_measurement=True,
-                measurement_goal=2,
-            ),
-            LessonStage(
-                title="Stage 4 · Sandbox",
-                summary=[
-                    "Combine all the ideas at your own pace.",
-                    "Experiment with delaying or hastening measurement.",
-                    "Can you predict the opponent while managing uncertainty?",
-                ],
-                objective="Free play — explore superposition and measurement together.",
-                allow_superposition=True,
-                allow_measurement=True,
-            ),
-        ]
+        self.snake: List[Position] = []
+        self.direction: Position = (1, 0)
+        self.next_direction: Position = (1, 0)
+        self.pending_growth = 0
+        self.elapsed_move = 0.0
+
         self.stage_index = 0
-        self.stage_intro_active = True
-        self.stage_timer = 0.0
-        self.superposition_timer = 0.0
-        self.measurements_made = 0
-        self.player_rallies = 0
-        self.lesson_complete = False
+        self.stage_points = 0
+        self.stage_collapses = 0
+        self.total_points = 0
+        self.total_collapses = 0
 
-    def run(self) -> None:
-        while self.running:
-            dt = self.clock.tick(60) / 1000
-            self.handle_events()
-            if not self.paused and not self.stage_intro_active:
-                self.update(dt)
-            self.draw()
-        pygame.quit()
+        self.measurement_flash_timer = 0.0
+        self.measurement_hint_timer = 0.0
+        self.banner_timer = 0.0
+        self.banner_text = ""
 
-    def handle_events(self) -> None:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                self.running = False
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    self.running = False
-                elif event.key == pygame.K_SPACE and not self.stage_intro_active:
-                    self.paused = not self.paused
-                elif event.key == pygame.K_RETURN and self.stage_intro_active:
-                    self.start_stage_play()
-                elif (
-                    event.key == pygame.K_m
-                    and not self.paused
-                    and not self.stage_intro_active
-                    and self.current_stage.allow_measurement
-                ):
-                    self.register_measurement()
+        self.fruit = QuantumFruit()
+        self.start_stage(initial=True)
+
+    def start_stage(self, initial: bool = False, message: str | None = None) -> None:
+        self.snake = [(GRID_WIDTH // 2 - i, GRID_HEIGHT // 2) for i in range(3)]
+        self.direction = (1, 0)
+        self.next_direction = (1, 0)
+        self.pending_growth = 0
+        self.elapsed_move = 0.0
+        self.stage_points = 0
+        self.stage_collapses = 0
+        self.measurement_flash_timer = 0.0
+        self.measurement_hint_timer = 0.0
+
+        stage = STAGES[self.stage_index]
+        self.fruit.spawn(self.snake, stage.superposition_chance)
+
+        if message:
+            self.banner_text = message
+        else:
+            self.banner_text = f"Stage {self.stage_index + 1}: {stage.title} — {stage.objective}"
+        self.banner_timer = BANNER_DURATION if (initial or message) else BANNER_DURATION
+
+    def fail_stage(self, reason: str) -> None:
+        stage = STAGES[self.stage_index]
+        fail_message = f"Stage reset: {reason}"
+        if not stage.allow_measurement:
+            fail_message += " (Tip: arrow keys steer!)"
+        self.start_stage(message=fail_message)
+
+    def handle_direction_change(self, key: int) -> None:
+        if key in (pygame.K_UP, pygame.K_w):
+            new_direction = (0, -1)
+        elif key in (pygame.K_DOWN, pygame.K_s):
+            new_direction = (0, 1)
+        elif key in (pygame.K_LEFT, pygame.K_a):
+            new_direction = (-1, 0)
+        elif key in (pygame.K_RIGHT, pygame.K_d):
+            new_direction = (1, 0)
+        else:
+            return
+
+        # Prevent reversing directly into yourself
+        if len(self.snake) > 1 and (
+            new_direction[0] == -self.direction[0] and new_direction[1] == -self.direction[1]
+        ):
+            return
+        self.next_direction = new_direction
+
+    def attempt_measurement(self) -> None:
+        stage = STAGES[self.stage_index]
+        if not stage.allow_measurement:
+            self.measurement_hint_timer = 1.5
+            return
+        if self.fruit.measure():
+            self.stage_collapses += 1
+            self.total_collapses += 1
+            self.measurement_flash_timer = MEASUREMENT_FLASH_DURATION
+        else:
+            self.measurement_hint_timer = 1.2
+
+    def move_snake(self) -> None:
+        self.direction = self.next_direction
+        head_x, head_y = self.snake[0]
+        new_head = (head_x + self.direction[0], head_y + self.direction[1])
+
+        if not (0 <= new_head[0] < GRID_WIDTH) or not (0 <= new_head[1] < GRID_HEIGHT):
+            self.fail_stage("You hit the wall")
+            return
+        if new_head in self.snake:
+            self.fail_stage("The snake intersected itself")
+            return
+
+        self.snake.insert(0, new_head)
+
+        ate_fruit = False
+        if self.fruit.state == "superposition" and new_head in self.fruit.positions:
+            self.measurement_hint_timer = 1.5
+        elif self.fruit.state != "superposition" and new_head == self.fruit.positions[0]:
+            ate_fruit = True
+
+        if ate_fruit:
+            self.pending_growth += 1
+            self.total_points += 1
+            self.stage_points += 1
+            stage = STAGES[self.stage_index]
+            self.fruit.spawn(self.snake, stage.superposition_chance)
+        if self.pending_growth > 0:
+            self.pending_growth -= 1
+        else:
+            self.snake.pop()
+
+    def check_progression(self) -> None:
+        if self.stage_index >= len(STAGES) - 1:
+            return
+        stage = STAGES[self.stage_index]
+        if stage.target_length and len(self.snake) >= stage.target_length:
+            self.advance_stage()
+        elif stage.target_collapses and self.stage_collapses >= stage.target_collapses:
+            self.advance_stage()
+        elif stage.target_score and self.stage_points >= stage.target_score:
+            self.advance_stage()
+
+    def advance_stage(self) -> None:
+        if self.stage_index < len(STAGES) - 1:
+            self.stage_index += 1
+            self.start_stage()
 
     def update(self, dt: float) -> None:
-        keys = pygame.key.get_pressed()
-        direction = 0
-        if keys[pygame.K_w] or keys[pygame.K_UP]:
-            direction -= 1
-        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-            direction += 1
-        self.player.move(direction, dt)
+        self.elapsed_move += dt
+        if self.measurement_flash_timer > 0:
+            self.measurement_flash_timer = max(0.0, self.measurement_flash_timer - dt)
+        if self.measurement_hint_timer > 0:
+            self.measurement_hint_timer = max(0.0, self.measurement_hint_timer - dt)
+        if self.banner_timer > 0:
+            self.banner_timer = max(0.0, self.banner_timer - dt)
 
-        avg_x, avg_y = self.ball.average_position()
-        if avg_y < self.opponent.y + PADDLE_HEIGHT / 2:
-            self.opponent.move(-0.6, dt)
-        else:
-            self.opponent.move(0.6, dt)
+        self.fruit.update(dt)
 
-        self.ball.update(dt)
-        if self.ball.collide_with_paddle(self.player, self.current_stage.allow_superposition):
-            self.player_rallies += 1
-        self.ball.collide_with_paddle(self.opponent, self.current_stage.allow_superposition)
+        if self.elapsed_move >= MOVE_DELAY:
+            self.elapsed_move -= MOVE_DELAY
+            self.move_snake()
+            self.check_progression()
 
-        score_direction = self.ball.any_state_offscreen()
-        if score_direction == -1:
-            self.opponent_score += 1
-            self.ball.reset(direction=1)
-        elif score_direction == 1:
-            self.player_score += 1
-            self.ball.reset(direction=-1)
-
-        self.measure_hint_timer += dt
-        self.stage_timer += dt
-        if len(self.ball.states) > 1:
-            self.superposition_timer += dt
-
-        if self.measurement_strip_visible:
-            self.measurement_strip_timer -= dt
-            if self.measurement_strip_timer <= 0:
-                self.measurement_strip_visible = False
-
-    def register_measurement(self) -> None:
-        self.ball.measure()
-        self.measure_hint_timer = 0.0
-        self.measurements_made += 1
-        self.measurement_strip_visible = True
-        self.measurement_strip_timer = 1.0
-
-    def draw_probability_bar(self) -> None:
-        bar_width = 220
-        bar_height = 14
-        x = WIDTH // 2 - bar_width // 2
-        y = HEIGHT - 60
-        pygame.draw.rect(self.screen, (26, 26, 36), (x, y, bar_width, bar_height), border_radius=6)
-        offset = x
-        for state in self.ball.states:
-            width = bar_width * state.probability
-            pygame.draw.rect(
+    def draw_grid(self) -> None:
+        for x in range(GRID_WIDTH):
+            pygame.draw.line(
                 self.screen,
-                state.color,
-                (offset, y, width, bar_height),
-                border_radius=6,
+                GRID_COLOR,
+                (x * CELL_SIZE, 0),
+                (x * CELL_SIZE, WINDOW_HEIGHT),
+                1,
             )
-            offset += width
-        caption = SMALL_FONT.render("Probability distribution of the ball", True, (230, 230, 230))
-        self.screen.blit(caption, (x, y - 22))
+        for y in range(GRID_HEIGHT):
+            pygame.draw.line(
+                self.screen,
+                GRID_COLOR,
+                (0, y * CELL_SIZE),
+                (WINDOW_WIDTH, y * CELL_SIZE),
+                1,
+            )
 
-    def draw_measurement_strip(self) -> None:
-        if not self.current_stage.allow_measurement or not self.measurement_strip_visible:
-            return
-        overlay = pygame.Surface((MEASUREMENT_STRIP_WIDTH, HEIGHT), pygame.SRCALPHA)
-        overlay.fill((90, 40, 150, 180))
-        self.screen.blit(overlay, (MEASUREMENT_STRIP_X, 0))
-        text = SMALL_FONT.render("Measurement Gate", True, (210, 200, 255))
-        self.screen.blit(text, (MEASUREMENT_STRIP_X - text.get_width() // 2, 20))
+    def draw_snake(self) -> None:
+        for index, (x, y) in enumerate(self.snake):
+            rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
+            if index == 0:
+                pygame.draw.rect(self.screen, SNAKE_HEAD_COLOR, rect, border_radius=6)
+            else:
+                body_color = (
+                    SNAKE_BODY_COLOR[0],
+                    int(SNAKE_BODY_COLOR[1] * (0.9 + 0.1 * (index % 2))),
+                    SNAKE_BODY_COLOR[2],
+                )
+                pygame.draw.rect(self.screen, body_color, rect, border_radius=4)
 
-    def draw_ui(self) -> None:
-        top_overlay = pygame.Surface((WIDTH, 72), pygame.SRCALPHA)
-        top_overlay.fill((18, 18, 28, 215))
-        self.screen.blit(top_overlay, (0, 0))
-        pygame.draw.line(self.screen, (60, 60, 90), (0, 72), (WIDTH, 72), 2)
+    def draw_panel(self) -> None:
+        stage = STAGES[self.stage_index]
+        panel = pygame.Surface((WINDOW_WIDTH, 150), pygame.SRCALPHA)
+        panel.fill(UI_PANEL)
+        self.screen.blit(panel, (0, 0))
 
-        score_text = FONT.render(
-            f"Player {self.player_score} : {self.opponent_score} Opponent",
+        title_text = FONT.render(stage.title, True, UI_TEXT)
+        self.screen.blit(title_text, (24, 12))
+
+        objective_text = SMALL_FONT.render(stage.objective, True, UI_TEXT)
+        self.screen.blit(objective_text, (24, 52))
+
+        stats = (
+            f"Stage points: {self.stage_points}    "
+            f"Snake length: {len(self.snake)}    "
+            f"Collapses: {self.stage_collapses}"
+        )
+        stats_text = SMALL_FONT.render(stats, True, UI_TEXT)
+        self.screen.blit(stats_text, (24, 86))
+
+        total_stats = SMALL_FONT.render(
+            f"Total points: {self.total_points}   Total collapses: {self.total_collapses}",
             True,
-            (240, 240, 240),
+            UI_TEXT,
         )
-        self.screen.blit(score_text, (WIDTH // 2 - score_text.get_width() // 2, 16))
+        self.screen.blit(total_stats, (24, 118))
 
-        instructions = [
-            "W/S or Up/Down: move paddle",
-            "Space: pause the simulation",
-        ]
-        if self.current_stage.allow_measurement:
-            instructions.insert(1, "M: measure now (collapse superposition)")
-        for idx, line in enumerate(instructions):
-            text = SMALL_FONT.render(line, True, (200, 200, 200))
-            self.screen.blit(text, (20, 16 + idx * 20))
+        concept_x = WINDOW_WIDTH - 360
+        concept_y = 18
+        concept_heading = SMALL_FONT.render("Concept focus:", True, UI_TEXT)
+        self.screen.blit(concept_heading, (concept_x, concept_y))
+        for idx, note in enumerate(stage.concept_notes):
+            bullet = TINY_FONT.render(f"• {note}", True, UI_TEXT)
+            self.screen.blit(bullet, (concept_x, concept_y + 28 + idx * 22))
 
-        self.draw_stage_tracker()
+    def draw_overlay_texts(self) -> None:
+        if self.banner_timer > 0 and self.banner_text:
+            banner_surface = pygame.Surface((WINDOW_WIDTH, 80), pygame.SRCALPHA)
+            banner_surface.fill((12, 0, 48, int(160 * (self.banner_timer / BANNER_DURATION + 0.2))))
+            self.screen.blit(banner_surface, (0, WINDOW_HEIGHT // 2 - 120))
+            text = BIG_FONT.render(self.banner_text, True, HINT_TEXT)
+            text_rect = text.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - 80))
+            self.screen.blit(text, text_rect)
 
-        if (
-            self.measure_hint_timer > 10
-            and len(self.ball.states) > 1
-            and self.current_stage.allow_measurement
-        ):
-            hint = SMALL_FONT.render(
-                "Try measuring! Press M to observe the system.",
-                True,
-                (255, 210, 180),
-            )
-            self.screen.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 90))
+        if self.measurement_flash_timer > 0:
+            alpha = int(120 * (self.measurement_flash_timer / MEASUREMENT_FLASH_DURATION))
+            overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((80, 0, 120, alpha))
+            self.screen.blit(overlay, (0, 0))
 
-    def draw_stage_tracker(self) -> None:
-        tracker_rect = pygame.Rect(WIDTH - 280, 8, 260, 56)
-        pygame.draw.rect(self.screen, (26, 26, 42), tracker_rect, border_radius=12)
-        pygame.draw.rect(self.screen, (70, 70, 120), tracker_rect, 2, border_radius=12)
-        stage_text = SMALL_FONT.render(
-            f"{self.current_stage.title}", True, (255, 210, 140)
-        )
-        self.screen.blit(stage_text, (tracker_rect.x + 12, tracker_rect.y + 8))
-        objective_text = SMALL_FONT.render(
-            self.current_stage.objective, True, (210, 210, 220)
-        )
-        self.screen.blit(objective_text, (tracker_rect.x + 12, tracker_rect.y + 30))
-        if self.lesson_complete:
-            completed = SMALL_FONT.render(
-                "Lesson complete! Enjoy the sandbox.", True, (180, 255, 180)
-            )
-            self.screen.blit(completed, (tracker_rect.x - 60, tracker_rect.y + 72))
+        control_hint = SMALL_FONT.render("Controls: Arrow keys/WASD move • M measures superpositions", True, HINT_TEXT)
+        hint_rect = control_hint.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT - 24))
+        self.screen.blit(control_hint, hint_rect)
 
-    @property
-    def current_stage(self) -> LessonStage:
-        return self.lesson_stages[self.stage_index]
-
-    def start_stage_play(self) -> None:
-        self.stage_intro_active = False
-        self.paused = False
-        self.stage_timer = 0.0
-        self.superposition_timer = 0.0
-        self.measure_hint_timer = 0.0
-        self.measurement_strip_visible = False
-        self.measurement_strip_timer = 0.0
-        self.player_rallies = 0
-        self.measurements_made = 0
-        if self.stage_index == len(self.lesson_stages) - 1:
-            self.lesson_complete = True
-        self.ball.reset(direction=random.choice([-1, 1]))
-
-    def complete_current_stage(self) -> None:
-        if self.stage_index == len(self.lesson_stages) - 1:
-            self.lesson_complete = True
-            return
-        self.stage_index += 1
-        self.stage_intro_active = True
-        self.paused = True
-        self.player_rallies = 0
-        self.measurements_made = 0
-        self.superposition_timer = 0.0
-        self.stage_timer = 0.0
-        self.measurement_strip_visible = False
-        self.measurement_strip_timer = 0.0
-        self.ball.reset(direction=random.choice([-1, 1]))
-
-    def check_stage_objectives(self) -> None:
-        stage = self.current_stage
-        if stage.required_rallies and self.player_rallies >= stage.required_rallies:
-            self.complete_current_stage()
-        elif (
-            stage.required_superposition_time
-            and self.superposition_timer >= stage.required_superposition_time
-        ):
-            self.complete_current_stage()
-        elif stage.measurement_goal and self.measurements_made >= stage.measurement_goal:
-            self.complete_current_stage()
+        if self.measurement_hint_timer > 0:
+            hint = "Measure first! Press M to collapse the quantum fruit."
+            text = FONT.render(hint, True, HINT_TEXT)
+            rect = text.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT - 64))
+            self.screen.blit(text, rect)
 
     def draw(self) -> None:
-        self.screen.fill((8, 8, 16))
-        self.draw_measurement_strip()
-        pygame.draw.rect(self.screen, (200, 200, 255), self.player.rect)
-        pygame.draw.rect(self.screen, (255, 120, 120), self.opponent.rect)
-        self.ball.draw(self.screen)
-        self.draw_probability_bar()
-        self.draw_ui()
+        self.screen.fill(BACKGROUND)
+        self.draw_grid()
+        self.draw_snake()
+        self.fruit.draw(self.screen)
+        self.draw_panel()
+        self.draw_overlay_texts()
 
-        if self.stage_intro_active:
-            self.draw_stage_intro()
-        elif self.paused:
-            self.draw_pause_overlay()
+    def run(self) -> None:
+        running = True
+        while running:
+            dt = self.clock.tick(60) / 1000.0
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    elif event.key == pygame.K_m:
+                        self.attempt_measurement()
+                    else:
+                        self.handle_direction_change(event.key)
 
-        if not self.lesson_complete:
-            self.check_stage_objectives()
+            self.update(dt)
+            self.draw()
+            pygame.display.flip()
 
-        pygame.display.flip()
-
-    def draw_stage_intro(self) -> None:
-        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        overlay.fill((10, 10, 30, 230))
-        self.screen.blit(overlay, (0, 0))
-        stage = self.current_stage
-        box = pygame.Rect(0, 0, WIDTH - 200, HEIGHT - 220)
-        box.center = (WIDTH // 2, HEIGHT // 2)
-        pygame.draw.rect(self.screen, (24, 24, 44), box, border_radius=16)
-        pygame.draw.rect(self.screen, (90, 90, 160), box, 3, border_radius=16)
-        title = TITLE_FONT.render(stage.title, True, (255, 215, 160))
-        self.screen.blit(title, (box.centerx - title.get_width() // 2, box.y + 30))
-        for idx, line in enumerate(stage.summary):
-            text = SMALL_FONT.render(line, True, (220, 220, 230))
-            self.screen.blit(text, (box.x + 40, box.y + 100 + idx * 26))
-        objective_label = FONT.render("Objective", True, (180, 220, 255))
-        self.screen.blit(objective_label, (box.x + 40, box.y + 220))
-        objective_text = SMALL_FONT.render(stage.objective, True, (200, 240, 255))
-        self.screen.blit(objective_text, (box.x + 40, box.y + 250))
-        prompt = SMALL_FONT.render("Press Enter to begin this stage", True, (255, 255, 255))
-        self.screen.blit(prompt, (box.centerx - prompt.get_width() // 2, box.bottom - 60))
-
-    def draw_pause_overlay(self) -> None:
-        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        overlay.fill((10, 10, 40, 180))
-        self.screen.blit(overlay, (0, 0))
-        pause_text = TITLE_FONT.render("Paused", True, (255, 255, 255))
-        self.screen.blit(pause_text, (WIDTH // 2 - pause_text.get_width() // 2, HEIGHT // 2 - 60))
-        info_lines = [
-            "While paused, consider how probabilities evolve over time.",
-            "What advantage does waiting before measuring give you?",
-        ]
-        for idx, line in enumerate(info_lines):
-            text = SMALL_FONT.render(line, True, (230, 230, 230))
-            self.screen.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 + idx * 20))
-        if self.lesson_complete:
-            congrats = SMALL_FONT.render(
-                "Lesson complete! Keep experimenting.", True, (180, 255, 180)
-            )
-            self.screen.blit(congrats, (WIDTH // 2 - congrats.get_width() // 2, HEIGHT // 2 + 80))
+        pygame.quit()
 
 
 def main() -> None:
-    game = QuantumPong()
+    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+    pygame.display.set_caption("Quantum Snake: Superposition and Measurement")
+    game = QuantumSnakeGame(screen)
     game.run()
 
 
