@@ -293,9 +293,8 @@ class Game:
         padding = 12
         y = padding
         for line in self.tutorial_lines():
-            text = self.tutorial_font.render(line, True, TEXT_COLOR)
-            panel.blit(text, (padding, y))
-            y += TUTORIAL_FONT_SIZE + 6
+            y = self.render_wrapped_text(panel, line, padding, y, PANEL_WIDTH - padding * 2)
+            y += 6
 
         if self.tutorial_level == 1:
             detail = "Quantum fact: before measuring, both ghost apples are equally possible."
@@ -305,8 +304,8 @@ class Game:
             detail = "Only measured apples count as food. Clones fade because they were never real."
         else:
             detail = "Grid navigation keeps you alive."
-        detail_text = self.tutorial_font.render(detail, True, TEXT_COLOR)
-        panel.blit(detail_text, (padding, y + 6))
+        y += 10
+        y = self.render_wrapped_text(panel, detail, padding, y, PANEL_WIDTH - padding * 2)
 
         if self.tutorial_ready_to_advance and not self.game_over:
             advance_msg = "Press ENTER for next lesson" if self.tutorial_level < 3 else "Press ENTER for Free Play"
@@ -316,6 +315,25 @@ class Game:
         panel.blit(advance_text, (padding, HEIGHT - 40))
 
         self.screen.blit(panel, (WIDTH - PANEL_WIDTH, 0))
+
+    def render_wrapped_text(self, surface: pygame.Surface, text: str, x: int, y: int, max_width: int) -> int:
+        words = text.split(" ")
+        line = ""
+        line_height = self.tutorial_font.get_linesize()
+        for word in words:
+            test_line = f"{line}{word} "
+            if self.tutorial_font.size(test_line)[0] > max_width and line:
+                rendered = self.tutorial_font.render(line.rstrip(), True, TEXT_COLOR)
+                surface.blit(rendered, (x, y))
+                y += line_height
+                line = f"{word} "
+            else:
+                line = test_line
+        if line:
+            rendered = self.tutorial_font.render(line.rstrip(), True, TEXT_COLOR)
+            surface.blit(rendered, (x, y))
+            y += line_height
+        return y
 
     def draw_game_over(self):
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
