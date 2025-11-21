@@ -115,6 +115,7 @@ class Game:
         self.state = "menu"  # menu | tutorial | free_play
         self.tutorial_level = 0
         self.tutorial_ready_to_advance = False
+        self.collapse_seen = False
         self.tutorial_target = pygame.Vector2(GRID_WIDTH // 2 + 5, GRID_HEIGHT // 2)
         self.score = 0
         self.game_over = False
@@ -139,6 +140,7 @@ class Game:
     def prepare_tutorial_level(self):
         self.reset_game()
         self.tutorial_ready_to_advance = False
+        self.collapse_seen = False
         if self.tutorial_level == 0:
             # Movement basics
             self.apple = None
@@ -148,7 +150,10 @@ class Game:
             # Superposition collapse
             self.apple = QuantumApple(self.snake.positions)
         elif self.tutorial_level == 2:
-            # Measurement and eating
+            # Observe measurement then eat the real apple
+            self.apple = QuantumApple(self.snake.positions)
+        elif self.tutorial_level == 3:
+            # Practice the full loop one more time
             self.apple = QuantumApple(self.snake.positions)
         else:
             self.start_free_play()
@@ -170,13 +175,13 @@ class Game:
 
     def handle_input(self):
         keys = pygame.key.get_pressed()
-        if keys[pygame.K_UP]:
+        if keys[pygame.K_w]:
             self.snake.turn(pygame.Vector2(0, -1))
-        elif keys[pygame.K_DOWN]:
+        elif keys[pygame.K_s]:
             self.snake.turn(pygame.Vector2(0, 1))
-        elif keys[pygame.K_LEFT]:
+        elif keys[pygame.K_a]:
             self.snake.turn(pygame.Vector2(-1, 0))
-        elif keys[pygame.K_RIGHT]:
+        elif keys[pygame.K_d]:
             self.snake.turn(pygame.Vector2(1, 0))
 
     def process_apple_interactions(self, spawn_new_on_eat: bool = True):
@@ -205,7 +210,7 @@ class Game:
         self.check_collisions()
 
     def update_tutorial(self):
-        if self.tutorial_level >= 3:
+        if self.tutorial_level >= 4:
             return
         self.handle_input()
         self.snake.move()
@@ -219,12 +224,16 @@ class Game:
                 self.tutorial_ready_to_advance = True
         elif self.tutorial_level == 2:
             measured_now, ate = self.process_apple_interactions(spawn_new_on_eat=False)
-            if self.apple is None and ate:
-                # apple removed after eating measured one
+            if measured_now:
+                self.collapse_seen = True
+            if self.apple is None and ate and self.collapse_seen:
                 self.tutorial_ready_to_advance = True
-            elif measured_now:
-                # allow player to see collapse even if not yet eaten
-                pass
+        elif self.tutorial_level == 3:
+            measured_now, ate = self.process_apple_interactions(spawn_new_on_eat=False)
+            if measured_now:
+                self.collapse_seen = True
+            if self.apple is None and ate:
+                self.tutorial_ready_to_advance = True
         self.check_collisions()
 
     def draw_target_tile(self):
@@ -253,20 +262,26 @@ class Game:
     def tutorial_lines(self) -> list[str]:
         if self.tutorial_level == 0:
             return [
-                "Level 1: Movement", 
-                "Use arrow keys to move.",
+                "Level 1: Movement",
+                "Use W/A/S/D to move on the grid.",
                 "Reach the highlighted tile to continue.",
             ]
         if self.tutorial_level == 1:
             return [
-                "Level 2: Superposition", 
-                "Apples start as two ghost positions.",
-                "Approach them to trigger a measurement.",
+                "Level 2: Superposition",
+                "Apples spawn in two ghost spots at once.",
+                "Get close to force nature to decide!",
+            ]
+        if self.tutorial_level == 2:
+            return [
+                "Level 3: Measurement",
+                "Moving near collapses the superposition.",
+                "Watch one ghost vanish; the real stays.",
             ]
         return [
-            "Level 3: Measurement & Growth", 
-            "After collapse, only one apple is real.",
-            "Eat the measured apple to grow and score!",
+            "Level 4: Eat the Measured Apple",
+            "Only the measured apple can be eaten.",
+            "Grab it to grow before Free Play.",
         ]
 
     def draw_tutorial_panel(self):
@@ -283,16 +298,18 @@ class Game:
             y += TUTORIAL_FONT_SIZE + 6
 
         if self.tutorial_level == 1:
-            detail = "Watch one clone vanish: that's measurement!"
+            detail = "Quantum fact: before measuring, both ghost apples are equally possible."
         elif self.tutorial_level == 2:
-            detail = "Measured apples stay; eat them to grow."
+            detail = "Measuring picks 1 outcome at random; after that, reality is locked in."
+        elif self.tutorial_level == 3:
+            detail = "Only measured apples count as food. Clones fade because they were never real."
         else:
             detail = "Grid navigation keeps you alive."
         detail_text = self.tutorial_font.render(detail, True, TEXT_COLOR)
         panel.blit(detail_text, (padding, y + 6))
 
         if self.tutorial_ready_to_advance and not self.game_over:
-            advance_msg = "Press ENTER for next lesson" if self.tutorial_level < 2 else "Press ENTER for Free Play"
+            advance_msg = "Press ENTER for next lesson" if self.tutorial_level < 3 else "Press ENTER for Free Play"
         else:
             advance_msg = "Complete the objective to advance"
         advance_text = self.tutorial_font.render(advance_msg, True, TEXT_COLOR)
